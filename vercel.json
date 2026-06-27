@@ -1,6 +1,6 @@
 {
   "name": "un-beautiful",
-  "version": "1.0.0",
+  "version": "1",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
