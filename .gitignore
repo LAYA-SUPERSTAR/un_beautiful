@@ -34,8 +34,7 @@ dist-ssr
 miniprogram/
 
 # Lib (compiled output)
-lib/
-lib/
+/lib/
 
 # Python cache
 __pycache__/

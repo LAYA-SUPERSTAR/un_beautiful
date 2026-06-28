@@ -7,6 +7,7 @@ import { ScanningAnimation } from '../components/ScanningAnimation';
 import { DataDashboard } from '../components/DataDashboard';
 import { useImageProcessing } from '../hooks/useImageProcessing';
 import { useFaceDetection } from '../hooks/useFaceDetection';
+import { compressImage } from '../lib/utils';
 
 import { BRAND, SCAN_STEPS } from '../config/brand';
 
@@ -146,7 +147,6 @@ export default function Home() {
       return;
     }
 
-    const MAX_SIZE = 5 * 1024 * 1024;
     const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png'];
 
     if (!ALLOWED_TYPES.includes(file.type)) {
@@ -155,58 +155,68 @@ export default function Home() {
       return;
     }
 
-    if (file.size > MAX_SIZE) {
-      setErrorMessage('文件过大，限制在 5MB 以内。');
-      setAppState('error');
-      return;
-    }
-
     setScanProgress(0);
-    setScanStep('正在读取图片...');
+    setScanStep('正在处理图片...');
     setAppState('scanning');
     startScanAnimation();
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const dataUrl = e.target?.result as string;
+    try {
+      let processedFile = file;
       
+      if (file.size > 5 * 1024 * 1024) {
+        setScanStep('图片过大，正在自动压缩...');
+        processedFile = await compressImage(file);
+      }
+
+      setScanStep('正在读取图片...');
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onerror = () => reject(new Error('图片读取失败'));
+        reader.readAsDataURL(processedFile);
+      });
+
+      setScanStep('正在检测人脸...');
       const img = new Image();
-      img.onload = async () => {
-        const detectionResult = await detectFaces(img);
+      const loadedImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('图片加载失败'));
+        img.src = dataUrl;
+      });
 
-        if (detectionResult.error) {
-          stopScanAnimation();
-          setErrorMessage(detectionResult.error);
-          setAppState('error');
-          return;
-        }
+      const detectionResult = await detectFaces(loadedImg);
 
-        if (detectionResult.faceCount === 0) {
-          stopScanAnimation();
-          setErrorMessage('未检测到人脸，请上传包含清晰正脸的人物照片。');
-          setAppState('error');
-          return;
-        }
-
-        if (detectionResult.faceCount >= 2) {
-          stopScanAnimation();
-          setErrorMessage('为了保证分析准确度，目前仅支持单人照片，请重新上传。');
-          setAppState('error');
-          return;
-        }
-
-        await processImage(file);
+      if (detectionResult.error) {
         stopScanAnimation();
-        setAppState('result');
-      };
-      img.src = dataUrl;
-    };
-    reader.onerror = () => {
+        setErrorMessage(detectionResult.error);
+        setAppState('error');
+        return;
+      }
+
+      if (detectionResult.faceCount === 0) {
+        stopScanAnimation();
+        setErrorMessage('😔 未检测到人脸，请上传包含清晰正脸的人物照片。');
+        setAppState('error');
+        return;
+      }
+
+      if (detectionResult.faceCount >= 2) {
+        stopScanAnimation();
+        setErrorMessage('📸 为了保证分析准确度，目前仅支持单人照片，请重新上传。');
+        setAppState('error');
+        return;
+      }
+
+      setScanStep('正在运行 AI 分析...');
+      await processImage(processedFile);
       stopScanAnimation();
-      setErrorMessage('图片读取失败，请重新上传。');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setAppState('result');
+    } catch (err) {
+      stopScanAnimation();
+      setErrorMessage(err instanceof Error ? err.message : '图片处理失败，请重新上传。');
       setAppState('error');
-    };
-    reader.readAsDataURL(file);
+    }
   }, [isProcessing, isDetecting, canUpload, detectFaces, processImage, startScanAnimation, stopScanAnimation]);
 
   const scrollToResults = useCallback(() => {
@@ -277,7 +287,7 @@ export default function Home() {
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-warning animate-pulse" />
-                    <span>最大 5MB</span>
+                    <span>自动压缩</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
